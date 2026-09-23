@@ -25,6 +25,14 @@ contract MockNoReturnToken {
     }
 
     // Intentionally returns nothing, like USDT
+    function transfer(address to, uint256 amount) external {
+        require(balanceOf[msg.sender] >= amount, "insufficient balance");
+
+        balanceOf[msg.sender] -= amount;
+        balanceOf[to] += amount;
+    }
+
+    // Intentionally returns nothing, like USDT
     function transferFrom(address from, address to, uint256 amount) external {
         uint256 allowed = allowance[from][msg.sender];
 

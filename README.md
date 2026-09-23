@@ -1,129 +1,93 @@
-# RobinBatchTransfer
+# rh-contract
 
-在 Robinhood Chain 上批量转账 ETH / ERC20 的合约。
+Robinhood Chain 上的两个**互相独立**的自用合约。两者没有共用代码、没有共用权限模型，使用方法各写一份文档。
 
-- 语言：Solidity `^0.8.24`
+| 合约 | 用途 | 权限 | 文档 |
+|---|---|---|---|
+| `RobinTimeLock` | ERC20 时间锁仓：锁到指定时间才能取回 | 无 owner / 无代理 / 无管理员 | **[docs/RobinTimeLock.md](docs/RobinTimeLock.md)** |
+| `RobinBatchTransfer` | 批量转账 ETH / ERC20（单笔最多 50 个地址） | 无 owner / 无代理 / 无管理员 | **[docs/RobinBatchTransfer.md](docs/RobinBatchTransfer.md)** |
+
+- 语言：Solidity `^0.8.24`，OpenZeppelin Contracts 5.1
 - 工具链：Hardhat 2 + ethers v6
-- 主网 chainId：`4663`
-- 测试网 chainId：`46630`
+- 主网 chainId：`4663`，测试网 chainId：`46630`
 
-## 功能
+> 时间锁仓合约的风险边界（尤其是"锁 Robinhood 股票代币会怎样"）写在
+> [docs/RobinTimeLock.md 第 7 节](docs/RobinTimeLock.md)，
+> 动手之前请务必读一遍。
 
-| 函数 | 说明 |
-|---|---|
-| `multiTransferETH(address payable[] recipients, uint256[] amounts)` | 批量转原生 ETH，单笔最多 50 个收款地址 |
-| `multiTransferToken(address token, address[] recipients, uint256[] amounts)` | 批量转 ERC20，单笔最多 50 个收款地址 |
+## 目录结构
 
-规则：
+```
+contracts/
+  RobinTimeLock.sol            # 时间锁仓合约
+  RobinBatchTransfer.sol       # 批量转账合约
+  mocks/
+    MockTokens.sol             # 测试用：标准 ERC20、USDT 式无返回值代币
+    MockAttackTokens.sol       # 测试用：手续费代币、重入攻击代币
+test/
+  RobinTimeLock.test.js
+  RobinBatchTransfer.test.js
+scripts/
+  deploy-timelock.js           # 部署 RobinTimeLock
+  deploy.js                    # 部署 RobinBatchTransfer
+  timelock.js                  # RobinTimeLock 命令行工具
+examples/
+  timelock.js                  # RobinTimeLock 完整调用示例（含中文注释）
+  batch-transfer.js            # RobinBatchTransfer 完整调用示例
+docs/
+  RobinTimeLock.md
+  RobinBatchTransfer.md
+```
 
-- `recipients.length` 必须等于 `amounts.length`，且 `1 <= length <= 50`
-- 每个 `amounts[i]` 必须大于 0，`recipients[i]` 不能是零地址
-- ETH 转账要求 `msg.value` 精确等于所有 `amounts` 之和
-- ERC20 转账前需要先 `approve` 本合约额度；使用 `SafeERC20`，兼容 USDT 这类不返回 `bool` 的 token
-- 两个入口都有 `nonReentrant` 保护
-- ETH 每笔 `call` 限 `100_000` gas（`ETH_TRANSFER_GAS_LIMIT`），普通 EOA / 交易所地址足够；如需转给复杂合约收款方，可调大或去掉该常量
-
-## 安装
+## 安装与配置
 
 ```bash
 npm install
 ```
 
-## 配置 .env
-
-复制并填写 `.env`（已加入 `.gitignore`）：
+`.env`（已在 `.gitignore` 里）：
 
 ```bash
-PRIVATE_KEY=部署钱包私钥
+PRIVATE_KEY=你的钱包私钥
 RH_RPC_URL=主网 RPC
 RH_TESTNET_RPC_URL=https://rpc.testnet.chain.robinhood.com
+
+TIME_LOCK_ADDRESS=            # 部署 RobinTimeLock 后填
+BATCH_TRANSFER_ADDRESS=       # 部署 RobinBatchTransfer 后填
 ```
 
-> 安全提示：`.env` 里是明文私钥，部署完建议删除；不要提交到任何公开仓库。建议使用只放少量 gas 的专用部署钱包。
+> **安全提示**：`.env` 里是明文私钥，建议用只放少量 gas 的专用钱包，且永远不要提交到公开仓库。大额资产建议用硬件钱包通过浏览器交互。
 
-## 编译
+## 常用命令
 
 ```bash
 npx hardhat compile
+npx hardhat test        # 两个合约的完整测试
 ```
 
-## 测试
+部署（务必先测试网，再主网）：
 
 ```bash
-npx hardhat test
-```
-
-覆盖用例：ETH 批量转账、金额不匹配、长度不匹配、超过 50 个、零地址/零金额、标准 ERC20、USDT 式无返回值 token、allowance 不足。
-
-## 部署
-
-先测试网，再主网：
-
-```bash
+npx hardhat run scripts/deploy-timelock.js --network robinhoodTestnet
 npx hardhat run scripts/deploy.js --network robinhoodTestnet
-npx hardhat run scripts/deploy.js --network robinhood
 ```
 
-部署脚本带网络白名单校验，只允许部署到 `4663`（主网）和 `46630`（测试网），不带 `--network` 会直接报错退出，防止误部署到本地网络。
+两个部署脚本都按 hardhat 网络名做白名单（`robinhood` / `robinhoodTestnet` / `localhost`），并核对 chainId 与 RPC 是否一致；忘了带 `--network` 会落到一次性的内存链上，脚本会直接拒绝。
 
-## 合约验证（官方 Blockscout）
-
-部署后会打印合约地址，例如 `0x...`。执行：
-
-```bash
-npx hardhat verify --network robinhoodTestnet <测试网合约地址>
-npx hardhat verify --network robinhood <主网合约地址>
-```
-
-验证成功后，可在官方浏览器查看：
+## 浏览器
 
 - 主网：https://robinhoodchain.blockscout.com
 - 测试网：https://explorer.testnet.chain.robinhood.com
 
-> 注：`rh-scan.com` 的 API 不是标准 Blockscout/Etherscan 接口，hardhat-verify 无法直接提交验证；如它后续提供网页 Verify 入口或标准 API，可再补。
+两个合约的源码验证都用官方 Blockscout（`hardhat.config.js` 里已配好通道）：
 
-## Gas 参考（50 个地址批量，按 0.297 Gwei 估算）
-
-| 场景 | gas | 手续费 |
-|---|---|---|
-| ETH 批量，收款地址已存在 | ~572,000 | ~0.00017 ETH |
-| ETH 批量，收款地址为全新地址 | ~1,824,000 | ~0.00054 ETH |
-| ERC20 批量 | ~1,440,000 | ~0.00043 ETH |
-
-> 全新地址（链上首次出现）会额外产生每地址 25,000 gas 的账户创建成本。
-
-## 调用示例（ethers v6）
-
-```js
-const { ethers } = require("ethers");
-
-const CONTRACT = "0x...";           // 部署后的合约地址
-const RPC = "https://rpc.mainnet.chain.robinhood.com";
-const PRIVATE_KEY = process.env.PRIVATE_KEY;
-
-const provider = new ethers.JsonRpcProvider(RPC);
-const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-
-const abi = [
-  "function multiTransferETH(address payable[] calldata recipients, uint256[] calldata amounts) external payable",
-  "function multiTransferToken(address token, address[] calldata recipients, uint256[] calldata amounts) external",
-];
-const contract = new ethers.Contract(CONTRACT, abi, wallet);
-
-// 批量转 ETH：给 3 个地址各转 0.01 ETH
-const recipients = ["0x1111...", "0x2222...", "0x3333..."];
-const amounts = [ethers.parseEther("0.01"), ethers.parseEther("0.01"), ethers.parseEther("0.01")];
-const total = amounts.reduce((a, b) => a + b, 0n);
-
-const tx = await contract.multiTransferETH(recipients, amounts, { value: total });
-await tx.wait();
+```bash
+npx hardhat verify --network robinhood <合约地址>
 ```
-
-ERC20 调用前先给合约 `approve` 足额额度，再调用 `multiTransferToken(token, recipients, amounts)`。
 
 ## 常见问题
 
-- **提示 `Contract source code not verified`**：部署和验证是两个独立步骤，运行上面的 `npx hardhat verify` 即可。
-- **验证报 `<!DOCTYPE ... is not valid JSON`**：检查是否使用了 `blockscout` 配置（本仓库已配好）；不要用 Etherscan 通道请求 Blockscout。
-- **ERC20 转账失败**：检查是否已 `approve` 本合约、余额是否足够。
-- **某笔 ETH 批量整体回滚**：确认没有收款地址是拒绝接收 ETH 的合约，或该合约接收逻辑需要超过 100k gas。
+- **提示 `Contract source code not verified`**：部署和验证是两个独立步骤，运行 `npx hardhat verify` 即可。
+- **验证报 `<!DOCTYPE ... is not valid JSON`**：本仓库已配好 `blockscout` 通道，不要用 Etherscan 通道请求 Blockscout。
+- **脚本报 `nonce has already been used`**：如果你在改脚本，记得用 `ethers.NonceManager` 包装 wallet——连续发两笔交易（approve + deposit）时，provider 缓存的 nonce 会让第二笔撞车。仓库里的脚本和示例都已经处理过。
+- **本地怎么演练**：两个合约的文档里都有"本地演练"一节，`npx hardhat node` + `--network localhost` 即可，部署脚本在本地会额外送一个可 mint 的测试代币。
